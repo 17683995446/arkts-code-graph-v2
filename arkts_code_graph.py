@@ -107,8 +107,13 @@ class ArkTSParser:
     )
 
     # 匹配方法调用: this.methodName(), ClassName.methodName(), methodName()
+    # 支持: 链式调用 .method(), 可选链 ?.method(), 闭包链 ).method()
     RE_METHOD_CALL = re.compile(
         r'(?:this\.|(\w+)\.)(\w+)\s*\('
+    )
+    # 额外匹配链式调用: ).method(), ].method(), ?.method(), word?.method()
+    RE_CHAIN_CALL = re.compile(
+        r'(?:(?:\)|\])\s*\??\.|(\w+)\s*\?\.)\s*(\w+)\s*\('
     )
 
     # 匹配组件使用: Component(), <Component>, Component({ ... })
@@ -503,7 +508,7 @@ class ArkTSParser:
             'function', 'const', 'let', 'var', 'static', 'private', 'public',
             'protected', 'abstract', 'override', 'super', 'this',
             'true', 'false', 'null', 'undefined', 'void', 'type', 'interface',
-            'enum', 'namespace', 'module', 'declare', 'require', 'constructor',
+            'enum', 'namespace', 'module', 'declare', 'require',
         }
         arkts_ui_components = {
             'Column', 'Row', 'Stack', 'List', 'Grid', 'Scroll', 'Tabs', 'TabContent',
@@ -825,6 +830,7 @@ class ArkTSParser:
         angle_depth = 0  # <> 的深度
         bracket_depth = 0  # () 的深度
         brace_depth = 0  # {} 的深度
+        square_depth = 0  # [] 的深度（元组类型、数组解构）
         current = ''
         for ch in params_str:
             if ch == '<':
@@ -848,7 +854,14 @@ class ArkTSParser:
                 if brace_depth > 0:
                     brace_depth -= 1
                 current += ch
-            elif ch == ',' and angle_depth == 0 and bracket_depth == 0 and brace_depth == 0:
+            elif ch == '[':
+                square_depth += 1
+                current += ch
+            elif ch == ']':
+                if square_depth > 0:
+                    square_depth -= 1
+                current += ch
+            elif ch == ',' and angle_depth == 0 and bracket_depth == 0 and brace_depth == 0 and square_depth == 0:
                 param = current.strip()
                 if param:
                     params.append(self._parse_single_param(param))
@@ -916,50 +929,69 @@ class ArkTSParser:
         # 预计算非代码区域（字符串和注释）
         non_code_ranges = self._find_non_code_ranges(method_body)
 
+        # 跳过语言内置方法和常见 API
+        builtins = {
+            'log', 'warn', 'error', 'debug', 'trace',
+            'then', 'catch', 'finally', 'toString', 'valueOf',
+            'hasOwnProperty', 'forEach', 'map', 'filter', 'reduce',
+            'find', 'findIndex', 'some', 'every', 'includes',
+            'indexOf', 'lastIndexOf', 'push', 'pop', 'shift', 'unshift',
+            'splice', 'slice', 'concat', 'join', 'reverse', 'sort',
+            'flat', 'flatMap', 'fill', 'copyWithin', 'entries', 'keys',
+            'values', 'length', 'charAt', 'charCodeAt', 'startsWith',
+            'endsWith', 'replace', 'replaceAll', 'search', 'match',
+            'matchAll', 'split', 'substring', 'substr', 'trim',
+            'trimStart', 'trimEnd', 'padStart', 'padEnd', 'repeat',
+            'toLowerCase', 'toUpperCase', 'toFixed', 'toPrecision',
+            'parseInt', 'parseFloat', 'isNaN', 'isFinite',
+            'bind', 'call', 'apply', 'assign', 'defineProperty',
+            'getPrototypeOf', 'setPrototypeOf', 'freeze', 'seal',
+            'preventExtensions', 'isFrozen', 'isSealed',
+            'stringify', 'abs', 'ceil', 'floor', 'round', 'max',
+            'min', 'random', 'sqrt', 'pow', 'sign', 'trunc', 'cbrt',
+            'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2',
+            'addEventListener', 'removeEventListener', 'dispatchEvent',
+            'querySelector', 'querySelectorAll', 'getElementById',
+            'getElementsByClassName', 'getElementsByTagName',
+            'setAttribute', 'getAttribute', 'removeAttribute',
+            'createElement', 'createTextNode', 'appendChild',
+            'removeChild', 'insertBefore', 'replaceChild',
+            'setTimeout', 'setInterval', 'clearTimeout', 'clearInterval',
+            'requestAnimationFrame', 'cancelAnimationFrame',
+            'encodeURI', 'decodeURI', 'encodeURIComponent', 'decodeURIComponent',
+            'btoa', 'atob',
+        }
+
+        # 第一轮：匹配 this.method() 和 ClassName.method()
         for match in self.RE_METHOD_CALL.finditer(method_body):
-            # 跳过字符串和注释中的调用
             if self._is_in_range(match.start(), non_code_ranges):
                 continue
 
             target_class = match.group(1) or current_class
             method_name = match.group(2)
 
-            # 跳过语言内置方法和常见 API（仅过滤真正的全局/语言级方法）
-            builtins = {
-                'log', 'warn', 'error', 'debug', 'trace',
-                'then', 'catch', 'finally', 'toString', 'valueOf',
-                'hasOwnProperty', 'forEach', 'map', 'filter', 'reduce',
-                'find', 'findIndex', 'some', 'every', 'includes',
-                'indexOf', 'lastIndexOf', 'push', 'pop', 'shift', 'unshift',
-                'splice', 'slice', 'concat', 'join', 'reverse', 'sort',
-                'flat', 'flatMap', 'fill', 'copyWithin', 'entries', 'keys',
-                'values', 'length', 'charAt', 'charCodeAt', 'startsWith',
-                'endsWith', 'replace', 'replaceAll', 'search', 'match',
-                'matchAll', 'split', 'substring', 'substr', 'trim',
-                'trimStart', 'trimEnd', 'padStart', 'padEnd', 'repeat',
-                'toLowerCase', 'toUpperCase', 'toFixed', 'toPrecision',
-                'parseInt', 'parseFloat', 'isNaN', 'isFinite',
-                'bind', 'call', 'apply', 'assign', 'defineProperty',
-                'getPrototypeOf', 'setPrototypeOf', 'freeze', 'seal',
-                'preventExtensions', 'isFrozen', 'isSealed',
-                'stringify', 'abs', 'ceil', 'floor', 'round', 'max',
-                'min', 'random', 'sqrt', 'pow', 'sign', 'trunc', 'cbrt',
-                'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2',
-                'addEventListener', 'removeEventListener', 'dispatchEvent',
-                'querySelector', 'querySelectorAll', 'getElementById',
-                'getElementsByClassName', 'getElementsByTagName',
-                'setAttribute', 'getAttribute', 'removeAttribute',
-                'createElement', 'createTextNode', 'appendChild',
-                'removeChild', 'insertBefore', 'replaceChild',
-                'setTimeout', 'setInterval', 'clearTimeout', 'clearInterval',
-                'requestAnimationFrame', 'cancelAnimationFrame',
-                'encodeURI', 'decodeURI', 'encodeURIComponent', 'decodeURIComponent',
-                'btoa', 'atob',
-            }
+            if method_name in builtins:
+                continue
+
+            key = (method_name, target_class)
+            if key not in seen:
+                seen.add(key)
+                calls.append(key)
+
+        # 第二轮：匹配链式调用 ).method() 和可选链 ?.method()
+        for match in self.RE_CHAIN_CALL.finditer(method_body):
+            if self._is_in_range(match.start(), non_code_ranges):
+                continue
+
+            # group(1) 是可选链前面的对象名（如 this.config?.getName() 中的 config）
+            # group(2) 是方法名
+            opt_target = match.group(1)
+            method_name = match.group(2)
 
             if method_name in builtins:
                 continue
 
+            target_class = opt_target or current_class
             key = (method_name, target_class)
             if key not in seen:
                 seen.add(key)
