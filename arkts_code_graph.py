@@ -232,8 +232,6 @@ class ArkTSParser:
                     continue
                 if stripped.startswith('@'):
                     dec_matches = self.RE_DECORATOR.findall(stripped)
-                    for dec_name, dec_args in dec_matches:
-                        decorators.append(dec_name)
                     # 检查装饰器后是否还有属性声明（非类声明）
                     # 如果有，停止向上查找（避免把属性装饰器归到类上）
                     last_dec_end = 0
@@ -241,8 +239,11 @@ class ArkTSParser:
                         last_dec_end = dm.end()
                     after_dec = stripped[last_dec_end:].strip()
                     if after_dec and not after_dec.startswith(('class', 'struct', 'export', 'default')):
-                        # 装饰器后是属性声明等，停止
+                        # 装饰器后是属性声明等，停止（不添加此装饰器）
                         break
+                    # 装饰器后无其他内容或以关键字开头，是类装饰器
+                    for dec_name, dec_args in dec_matches:
+                        decorators.append(dec_name)
                 elif stripped.startswith('export') or stripped.startswith('default'):
                     # 跳过 export/default 关键字行，继续向上查找装饰器
                     continue
@@ -788,19 +789,24 @@ class ArkTSParser:
                 stripped = line.strip()
                 if not stripped or stripped.startswith('//') or stripped.startswith('/*') or stripped.startswith('*'):
                     continue
-                if stripped.startswith('@'):
-                    # 检查是否是纯装饰器行（后面没有属性/方法声明）
-                    # 属性装饰器行如: @State count: number = 0
-                    # 方法装饰器行如: @Builder 或 @Watch('onChange')
-                    dec_match = self.RE_DECORATOR.match(stripped)
+                # 查找行中的装饰器（可能不以@开头，如 "{ @Builder"）
+                at_pos = stripped.find('@')
+                if at_pos >= 0:
+                    # 检查 @ 前面是否只有空白或 { （类体开始）
+                    before_at = stripped[:at_pos].strip()
+                    if before_at and before_at != '{':
+                        # @ 前面有其他代码（如属性赋值），停止
+                        break
+                    dec_str = stripped[at_pos:]
+                    dec_match = self.RE_DECORATOR.match(dec_str)
                     if dec_match:
-                        # 检查装饰器匹配后是否还有其他内容
-                        after_dec = stripped[dec_match.end():].strip()
+                        after_dec = dec_str[dec_match.end():].strip()
                         if not after_dec:
-                            # 纯装饰器行，是方法装饰器
                             decorators.append(dec_match.group(1))
+                        elif re.match(r'\w+\s*\(', after_dec) or re.match(r'\w+\s*<', after_dec):
+                            decorators.append(dec_match.group(1))
+                            break
                         else:
-                            # 装饰器后还有内容（属性声明等），停止
                             break
                 elif stripped.startswith('export') or stripped.startswith('default'):
                     continue
