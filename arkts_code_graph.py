@@ -1050,6 +1050,12 @@ class ArkTSParser:
             if comp_name in ts_keywords:
                 continue
 
+            # 跳过 new 实例化（如 new MyService()）
+            match_start = match.start()
+            before = build_body[:match_start].rstrip()
+            if before.endswith('new'):
+                continue
+
             if comp_name not in seen:
                 seen.add(comp_name)
                 components.append(comp_name)
@@ -1146,9 +1152,9 @@ class CodeKnowledgeGraph:
         call_count = 0
 
         for arkts_file in files:
-            # 插入文件
+            # 插入文件（支持重复build）
             self.cursor.execute(
-                "INSERT INTO files VALUES (?, ?)",
+                "INSERT OR REPLACE INTO files VALUES (?, ?)",
                 (arkts_file.path, arkts_file.line_count)
             )
             file_count += 1
@@ -1156,7 +1162,7 @@ class CodeKnowledgeGraph:
             for cls in arkts_file.classes:
                 # 插入类
                 self.cursor.execute(
-                    "INSERT INTO classes VALUES (?, ?, ?, ?, ?, ?)",
+                    "INSERT OR REPLACE INTO classes VALUES (?, ?, ?, ?, ?, ?)",
                     (
                         cls.name,
                         cls.file_path,
