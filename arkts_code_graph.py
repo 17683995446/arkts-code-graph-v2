@@ -33,7 +33,7 @@ from typing import Optional
 PROJECT_PATH = "/你的/鸿蒙/项目/路径"
 
 # 硅基流动 API 配置
-SILICONFLOW_API_KEY = "sk-uqelhavcdhfxjzjesdenxpbtqombamjniazzjtbssmdcwdvg"
+SILICONFLOW_API_KEY = "REDACTED_API_KEY"
 SILICONFLOW_BASE_URL = "https://api.siliconflow.cn/v1"
 SILICONFLOW_MODEL = "Qwen/Qwen2.5-7B-Instruct"  # 免费模型
 
